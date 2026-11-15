@@ -59,6 +59,9 @@ interface HubState extends HubData {
   /** Deletes a content item together with its publications, and unlinks its media. */
   removeContent(contentId: string): void;
   addCampaign(campaign: Campaign): void;
+  updateCampaign(campaignId: string, campaignPatch: Partial<Campaign>): void;
+  /** Deletes a campaign and unlinks its content items (the content itself is kept). */
+  removeCampaign(campaignId: string): void;
   addPublication(publication: Publication): void;
   updatePublication(publicationId: string, publicationPatch: Partial<Publication>): void;
   importData(importedHubData: HubData): Promise<ActionResult>;
@@ -296,6 +299,41 @@ export const useHubStore = create<HubState>()(
             { upsert: { campaigns: [campaign] } },
             `Created campaign “${campaign.title}”`,
           ),
+        updateCampaign(campaignId, campaignPatch) {
+          const existing = get().campaigns.find((campaign) => campaign.id === campaignId);
+          if (!existing) return;
+          const updated = { ...existing, ...campaignPatch, id: campaignId };
+          commit(
+            (currentState) => ({
+              campaigns: currentState.campaigns.map((campaign) =>
+                campaign.id === campaignId ? updated : campaign,
+              ),
+            }),
+            { upsert: { campaigns: [updated] } },
+            `Updated campaign “${updated.title}”`,
+          );
+        },
+        removeCampaign(campaignId) {
+          const existing = get().campaigns.find((campaign) => campaign.id === campaignId);
+          if (!existing) return;
+          const unlinkedContent: ContentItem[] = get()
+            .content.filter((contentItem) => contentItem.campaign === campaignId)
+            .map((contentItem) => ({ ...contentItem, campaign: "" }));
+          commit(
+            (currentState) => ({
+              campaigns: currentState.campaigns.filter((campaign) => campaign.id !== campaignId),
+              content: currentState.content.map(
+                (contentItem) =>
+                  unlinkedContent.find((unlinked) => unlinked.id === contentItem.id) ?? contentItem,
+              ),
+            }),
+            {
+              upsert: { content: unlinkedContent },
+              remove: { campaigns: [campaignId] },
+            },
+            `Deleted campaign “${existing.title}”`,
+          );
+        },
         addPublication: (publication) =>
           commit(
             (currentState) => ({ publications: [publication, ...currentState.publications] }),

@@ -14,7 +14,14 @@ import type { ProductionQueueItemViewModel, ProductionReviewProps } from "./prod
 export function useProductionController(): ProductionReviewProps {
   const contentItems = useHubStore((state) => state.content);
   const updateContent = useHubStore((state) => state.updateContent);
+  const removeContent = useHubStore((state) => state.removeContent);
+  const publications = useHubStore((state) => state.publications);
   const { checks, stages, stageLabel } = useOptions();
+
+  const publicationCounts: Record<string, number> = {};
+  for (const publication of publications) {
+    publicationCounts[publication.content] = (publicationCounts[publication.content] ?? 0) + 1;
+  }
 
   const toQueueItem = (contentItem: ContentItem): ProductionQueueItemViewModel => ({
     id: contentItem.id,
@@ -22,7 +29,7 @@ export function useProductionController(): ProductionReviewProps {
     format: contentItem.format,
     owner: contentItem.owner,
     status: contentItem.status,
-    statusLabel: stageLabel[contentItem.status],
+    statusLabel: stageLabel[contentItem.status] ?? contentItem.status,
     checkedKeys: contentItem.checks,
     readiness: getContentReadiness(contentItem, checks),
     visibleChecks: checks
@@ -32,35 +39,24 @@ export function useProductionController(): ProductionReviewProps {
       key: stage.key,
       label: stage.label,
     })),
+    publicationCount: publicationCounts[contentItem.id] ?? 0,
   });
 
-  const productionQueue = contentItems.filter((contentItem) =>
-    ["ready_to_shoot", "shot", "editing", "needs_changes", "in_review", "approved"].includes(
-      contentItem.status,
-    ),
-  );
-  const queueGroups = [
-    {
-      key: "production",
-      title: "In production",
-      contentItems: productionQueue.filter((contentItem) =>
-        ["ready_to_shoot", "shot", "editing", "needs_changes"].includes(contentItem.status),
-      ),
-    },
-    {
-      key: "review",
-      title: "Review queue",
-      contentItems: productionQueue.filter((contentItem) => contentItem.status === "in_review"),
-    },
-    {
-      key: "ready",
-      title: "Approved",
-      contentItems: productionQueue.filter((contentItem) => contentItem.status === "approved"),
-    },
-  ].map((queueGroup) => ({
-    ...queueGroup,
-    contentItems: queueGroup.contentItems.map(toQueueItem),
-  }));
+  // One column per status, in workflow order. A retired stage keeps its column while
+  // items still use it, so nothing disappears from the board.
+  const statusColumns = stages
+    .map((stage) => ({
+      status: stage.key,
+      title: stage.label,
+      active: stage.active,
+      contentItems: contentItems.filter((contentItem) => contentItem.status === stage.key),
+    }))
+    .filter((column) => column.active || column.contentItems.length)
+    .map(({ status, title, contentItems: columnItems }) => ({
+      status,
+      title,
+      contentItems: columnItems.map(toQueueItem),
+    }));
 
   function changeCheck(contentId: string, checkKey: string, checked: boolean) {
     const contentItem = contentItems.find((candidate) => candidate.id === contentId);
@@ -70,9 +66,10 @@ export function useProductionController(): ProductionReviewProps {
   }
 
   return {
-    queueGroups,
+    statusColumns,
     onCreateContent: openNewContentEditor,
     onEditContent: openContentEditor,
+    onDeleteContent: removeContent,
     onCheckChange: changeCheck,
     onStatusChange: (contentId: string, status: ContentStatus) =>
       updateContent(contentId, { status }),
