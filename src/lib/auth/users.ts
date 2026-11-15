@@ -31,22 +31,54 @@ export interface AuthenticatedUser {
 }
 
 export function rootAdmins(): DirectoryUser[] {
-  try {
-    const parsed: unknown = JSON.parse(process.env.HUB_USERS || "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((entry) => entry && typeof entry.email === "string")
-      .map((entry) => ({
-        email: normalizeEmail(entry.email),
-        name: String(entry.name || entry.email),
-        role: "admin" as const,
-        active: entry.active !== false,
-        root: true,
-        passwordHash: typeof entry.passwordHash === "string" ? entry.passwordHash : undefined,
-      }));
-  } catch {
+  const raw = process.env.HUB_USERS ?? "";
+  if (!raw.trim()) {
+    warnAboutHubUsers("HUB_USERS is not set (or empty) in the server environment.");
     return [];
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    warnAboutHubUsers(
+      `HUB_USERS is not valid JSON, so every root admin is ignored: ${(error as Error).message}. ` +
+      `It starts with ${JSON.stringify(raw.slice(0, 2))} and is ${raw.length} characters long. ` +
+      `Keep it on ONE line, wrapped in single quotes: HUB_USERS='[{"email":"…","name":"…","passwordHash":"$2b$12$…"}]'`,
+    );
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    warnAboutHubUsers('HUB_USERS must be a JSON array: [{"email":…}, …].');
+    return [];
+  }
+  const admins = parsed
+    .filter((entry) => entry && typeof entry.email === "string")
+    .map((entry) => ({
+      email: normalizeEmail(entry.email),
+      name: String(entry.name || entry.email),
+      role: "admin" as const,
+      active: entry.active !== false,
+      root: true,
+      passwordHash: typeof entry.passwordHash === "string" ? entry.passwordHash : undefined,
+    }));
+  if (admins.length < parsed.length)
+    warnAboutHubUsers(
+      `${parsed.length - admins.length} HUB_USERS entries have no "email" and are ignored.`,
+    );
+  for (const admin of admins)
+    if (!/^\$2[aby]\$\d{2}\$.{53}$/.test(admin.passwordHash ?? ""))
+      warnAboutHubUsers(
+        `HUB_USERS entry "${admin.email}" has no valid "passwordHash" (a 60-character bcrypt hash), so it cannot sign in.`,
+      );
+  return admins;
+}
+
+/** Explains HUB_USERS problems on the server console, once per message. Never prints the value. */
+const reportedHubUsersWarnings = new Set<string>();
+function warnAboutHubUsers(message: string) {
+  if (reportedHubUsersWarnings.has(message)) return;
+  reportedHubUsersWarnings.add(message);
+  console.warn(`[auth] ${message}`);
 }
 
 /** Short cache so every request does not read the Users tab; cleared when users change. */
@@ -127,8 +159,7 @@ const BCRYPT_HASH = /^\$2[aby]\$\d{2}\$.{53}$/;
 function explainRejection(email: string, reason: string, users: DirectoryUser[]) {
   if (process.env.NODE_ENV === "production") return;
   console.warn(
-    `[auth] Sign-in refused for "${normalizeEmail(email)}": ${reason}. Known accounts: ${
-      users.map((user) => `${user.email}${user.root ? " (root)" : ""}`).join(", ") || "none"
+    `[auth] Sign-in refused for "${normalizeEmail(email)}": ${reason}. Known accounts: ${users.map((user) => `${user.email}${user.root ? " (root)" : ""}`).join(", ") || "none"
     }.`,
   );
 }
