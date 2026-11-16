@@ -171,7 +171,7 @@ function ContentEditorForm({
         <FormField label="Shoot date">
           <Input type="date" name="shoot" defaultValue={editingContent?.shoot} />
         </FormField>
-        <FormField label="Due date">
+        <FormField label="Publish date">
           <Input type="date" name="due" defaultValue={editingContent?.due} />
         </FormField>
         <div className="col-span-2 max-[560px]:col-span-1">
